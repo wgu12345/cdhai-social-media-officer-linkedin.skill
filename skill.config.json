@@ -1,0 +1,45 @@
+{
+  "name": "cdhai-social-media-officer-linkedin",
+  "version": "0.3.0",
+  "description": "Generates polished LinkedIn post drafts from a folder of CDHAI / Carey source materials. Outputs Word documents ready for human review.",
+  "owner": "wgu12345",
+  "repository": "https://github.com/wgu12345/cdhai-social-media-officer-linkedin.skill",
+  "companion_skill": "cdhai-content-reviewer",
+  "platform": "codex",
+  "platform_versions": ["codex-app", "codex-cli"],
+  "language": "en",
+  "triggers": [
+    "use the cdhai-social-media-officer-linkedin skill",
+    "draft a LinkedIn post for CDHAI",
+    "generate a LinkedIn post",
+    "write a LinkedIn post about",
+    "create a LinkedIn draft"
+  ],
+  "required_files_in_input_folder": [
+    "content.{md,txt,docx,pdf}"
+  ],
+  "optional_files_in_input_folder": [
+    "images/",
+    "style_reference.{txt,html,pdf}"
+  ],
+  "output_files": [
+    "linkedin_post.docx",
+    "report.docx",
+    "review_report.docx",
+    "images_used/"
+  ],
+  "external_apis": {
+    "unsplash": {
+      "purpose": "CC-licensed photo search when user folder has no images",
+      "required_key": "unsplash_access_key",
+      "key_location": "~/.cdhai-linkedin-skill/config.json"
+    },
+    "openai_dalle": {
+      "purpose": "AI image generation when user folder has no images",
+      "required_key": "openai_api_key",
+      "key_location": "~/.cdhai-linkedin-skill/config.json",
+      "disclosure_required": true
+    }
+  },
+  "memory_location": "~/.cdhai-linkedin-skill/memory/"
+}
