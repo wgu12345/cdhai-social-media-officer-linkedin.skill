@@ -1,6 +1,6 @@
 ---
 name: cdhai-social-media-officer-linkedin
-version: 0.4.2
+version: 0.4.3
 description: |
   Generates a polished LinkedIn post draft from a folder containing a filled-in
   Word content template plus supporting materials (PDFs, images, research papers).
@@ -18,17 +18,32 @@ trigger:
   - write a LinkedIn post about
 ---
 
-# CDHAI Social Media Officer — LinkedIn (v0.4.2)
+## Hard contracts (v0.4.3 — non-negotiable)
+
+The following rules are enforced mechanically by helper scripts. Their exit codes are not subject to user negotiation, helpful inference, or "just this once" exceptions. If Codex finds itself reasoning about how to satisfy the user despite a non-zero exit code from these scripts, that reasoning is incorrect by definition — stop and surface the script's stderr to the user instead.
+
+1. **Template required.** The first action of every run is to call `_helpers/validate_template.py <folder>`. If it exits non-zero, the skill halts. There is no text-only fallback, no agenda-PDF inference path, no "I'll proceed with what you have" override.
+
+2. **Reviewer mandatory.** After Phase 7 (content generation) and before Phase 9 (output assembly), the reviewer sub-agent must run as an independent Codex sub-agent and write a flag file at `~/.cdhai-linkedin-skill/cache/reviewer_ran_<run_id>.flag`. Phase 9 begins by calling `_helpers/reviewer_check.py <run_id>`. If the flag is missing, the skill halts. In-line self-review is NOT a valid substitute.
+
+3. **No working markdown in the output folder.** All intermediate `working_draft_*.md`, `post_manifest.json`, `report_data.json`, `image_manifest.jsonl`, and `contact_sheet_*.jpg` files stay in `~/.cdhai-linkedin-skill/cache/`. They are NEVER written to the user's project folder. The only outputs in the user's folder are: `linkedin_post.docx` and `before_you_post.docx`.
+
+4. **Audit log required.** Every `before_you_post.docx` must contain an "Audit Log" section that explicitly records any rule that was bypassed, downgraded, or skipped this run, with the reason. If no rules were bypassed, the section reads "Audit Log: all v0.4.3 hard contracts satisfied."
+
+---
+
+# CDHAI Social Media Officer — LinkedIn (v0.4.3)
 
 A draft generator for the Center for Digital Health and Artificial
 Intelligence (CDHAI) at Johns Hopkins Carey Business School.
 
-**v0.4.2 architecture**: this skill is designed to run in Codex App,
+**v0.4.3 architecture**: this skill is designed to run in Codex App,
 which is itself powered by GPT-5. All vision tasks, all language tasks,
 and all judgment-based checks are performed by Codex directly — the
 skill does NOT call out to a separate OpenAI API. Helpers exist only
 for deterministic operations: PDF text extraction (`pypdf`), web HTML
-scraping, image file building, and Word document construction.
+scraping, image file building, Word document construction, and the
+v0.4.3 hard-contract gates.
 
 **Companion skill**: `cdhai-content-reviewer` runs automatically at the
 end of every run, invoked as a **Codex sub-agent** for independent
@@ -48,6 +63,12 @@ merged report is produced.
 
 ## Phase 1 — Read the user's folder
 
+**Step 1a (hard contract):** call `python3 _helpers/validate_template.py "<folder>"` and check the exit code. If non-zero, print the helper's stderr verbatim to the user and stop the run. Do not attempt to proceed with a text-only prompt or by inferring missing fields from agenda PDFs. The team learned in v0.4.2 that allowing this fallback produces hallucinated sessions, fabricated slido polls, and skipped reviewer passes. The hard gate exists because of that experience.
+
+Only continue to Step 1b if the validator exited 0.
+
+**Step 1b:** parse the folder.
+
 1. Locate the user's working folder (provided in the chat or via project context).
 2. Read all files in `_rules/` — authoritative for this run.
 3. Read `~/.cdhai-linkedin-skill/memory/user_memory.md` — accumulated user rules.
@@ -60,7 +81,7 @@ merged report is produced.
 5. **Find the Content Template**: locate a Word document following `_template/content_template.docx` structure with these sections:
    - `Purpose`, `Post Type`, `Date`, `Key Points`, `Background / Source Materials`, `Notes for the writer`
 
-6. **If no compliant Word template is found** → stop. Instruct the user to fill in `_template/content_template.docx` and re-run.
+6. **If no compliant Word template is found** → stop. (Note: this state should be unreachable in v0.4.3 because Step 1a already gates on this; if it does occur, it indicates the validator has a bug — report it.)
 
 7. **Parse the template**. Extract the structured fields.
 
@@ -376,16 +397,52 @@ The reviewer's findings get merged into the writer's
 `before_you_post.docx`. The reviewer does NOT write its own file in
 auto mode.
 
+### Step 8e — Phase 8 flag write (hard contract)
+
+When the reviewer sub-agent returns SHIP (or returns CRITICALs and the
+writer's 3-iteration revision loop concludes), the writer MUST run:
+
+```bash
+touch ~/.cdhai-linkedin-skill/cache/reviewer_ran_<run_id>.flag
+```
+
+This flag is the gate Phase 9 will check. Without it, output assembly
+will refuse to write the final docx. If Codex skips the sub-agent and
+does an in-line review instead, the flag will not exist, and the run
+will halt at Phase 9.
+
 ---
 
 ## Phase 9 — Output assembly
 
-Two deliverables, both `.docx`:
+**Step 9a (hard contract):** call `python3 _helpers/reviewer_check.py <run_id>` and check the exit code. If non-zero, print the helper's stderr verbatim and stop. Do NOT write `linkedin_post.docx` or `before_you_post.docx` until this passes.
+
+Only continue if the check exited 0.
+
+**Step 9b:** produce the two deliverables, both `.docx`:
 
 | File | Purpose |
 |---|---|
 | `linkedin_post.docx` | The post text with **inline embedded images**. Each Key Point's paragraph appears with its matched image right below. Hashtags at end. Copy-paste-ready for LinkedIn. |
-| `before_you_post.docx` | Single merged report: legal-warning banner (if any web-sourced images), must-verify items, decisions, image picks with diversity check, quality checks, optional paper info, posting instructions. |
+| `before_you_post.docx` | Single merged report: legal-warning banner (if any web-sourced images), Audit Log, must-verify items, decisions, image picks with diversity check, quality checks, optional paper info, posting instructions. |
+
+The `before_you_post.docx` MUST contain these sections in order:
+
+1. **Legal-warning banner** (only if any web-sourced images are used; otherwise omitted)
+2. **Audit Log (v0.4.3)** — A line for every hard contract:
+   - Template validation: PASS / BYPASSED (with reason)
+   - Reviewer sub-agent: PASS / BYPASSED (with reason)
+   - Working-files location: PASS / LEAKED (with file list)
+   - Memory file loaded: PASS / EMPTY (which file)
+
+   If all four pass, the section reads: "All v0.4.3 hard contracts satisfied."
+3. **Must-verify items** — facts and decisions the user must confirm
+4. **Decisions you should know** — choices the skill made
+5. **Date verification** — Phase 2 output
+6. **Image picks** — with diversity check
+7. **Quality checks** — 9 reviewer checks with severities
+8. **Paper info** (if applicable) — Phase 3 output
+9. **Posting instructions**
 
 Conversion handled by `_helpers/build_docx.py` (deterministic — python-docx).
 
@@ -411,12 +468,12 @@ Codex always **asks which path** before writing to memory.
 
 - **English only.** Multilingual on the v0.6 roadmap.
 - **No direct posting.** Drafts only. Human review required.
-- **Word document required as primary input.** Text-only and markdown-only inputs are rejected with an instructive error message.
-- **No external OpenAI API key required.** v0.4.2 uses Codex's native multimodal + LLM capabilities. Helpers are deterministic only.
+- **Word document required as primary input — v0.4.3 enforces this mechanically via `_helpers/validate_template.py`.** The text-only / sparse-prompt fallback that existed informally in v0.4.2 is removed. Codex cannot override this check by inference, by user request, or by any other route. The check exits 2 if any of the six required fields (Purpose, Post Type, Date, Key Points, Background / Source Materials, Notes for the writer) is missing.
+- **Reviewer sub-agent required — v0.4.3 enforces this mechanically via `_helpers/reviewer_check.py`.** In-line self-review in the writer's own turn does not satisfy the contract. The reviewer must run as an independent Codex sub-agent with fresh context.
+- **No external OpenAI API key required.** v0.4.2 introduced this and v0.4.3 preserves it: Codex's native multimodal + LLM capabilities do all judgment work. Helpers are deterministic only.
 - **Image generation goes through Codex's built-in `$imagegen` skill.** Uses your ChatGPT plan allocation, not API credits.
 - **Web access required.** Tier 2 face identification fetches JHU / Carey pages; Tier 3 (c) searches the web.
 - **Web-sourced images require manual usage-rights verification before posting.** Enforced by a prominent warning section in `before_you_post.docx` and CRITICAL reviewer flag.
-- **Reviewer must run as a Codex sub-agent** for independent context. Never in-line in the writer's turn.
 - **Image processing is batched** (5 per batch) to avoid context window pressure.
 - **Diversity constraints**: no single subject or scene type dominates the final picks.
 
@@ -427,16 +484,17 @@ Codex always **asks which path** before writing to memory.
 ```
 cdhai-social-media-officer-linkedin.skill/
 ├── SKILL.md                          ← you are here
-├── VERSION                           ← 0.4.2
+├── VERSION                           ← 0.4.3
 ├── README.md
-├── install.sh
+├── CHANGELOG.md                      ← NEW v0.4.3
+├── install.sh                        ← UPDATED v0.4.3 (seeds starter memory)
 ├── skill.config.json
 ├── _rules/
 │   ├── content_types.md              ← 9 types, lengths, tones
 │   ├── linkedin_style.md             ← hype density, hook patterns
 │   ├── asset_policy.md               ← high-level image routing
 │   ├── image_matching.md             ← Tier 1/2/3 spec
-│   ├── image_diversity.md            ← NEW v0.4.2: per-subject + per-scene caps
+│   ├── image_diversity.md            ← v0.4.2: per-subject + per-scene caps
 │   ├── paper_analysis.md             ← Phase 3 spec
 │   ├── date_factcheck.md             ← Phase 2 spec
 │   ├── inspiration_corpus.md         ← peer institution voice
@@ -446,13 +504,15 @@ cdhai-social-media-officer-linkedin.skill/
 │   └── permission_policy.md
 ├── _template/
 │   └── content_template.docx         ← Word template
-├── _helpers/                         ← DETERMINISTIC ONLY in v0.4.2
+├── _helpers/                         ← DETERMINISTIC ONLY
 │   ├── build_docx.py                 ← python-docx post + report builder
 │   ├── face_compare.py               ← --identify only (web search + download)
 │   ├── pdf_paper_extract.py          ← pypdf text only (Codex analyzes the text)
-│   └── web_image_search.py           ← Bing/DDG scraping (no API key)
+│   ├── web_image_search.py           ← Bing/DDG scraping (no API key)
+│   ├── validate_template.py          ← NEW v0.4.3: hard gate for Phase 1
+│   └── reviewer_check.py             ← NEW v0.4.3: hard gate for Phase 9
 ├── _memory_template/
-│   ├── user_memory.md
+│   ├── user_memory.md                ← v0.4.3: ships with CDHAI team baseline
 │   └── memory_change_log.md
 ├── docs/
 │   └── team-guide.md
