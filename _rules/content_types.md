@@ -1,74 +1,128 @@
 # Content Types
 
-Nine content types covering the post categories CDHAI and peer institutions
-(Stanford HAI, MIT Jameel, Wharton AI Lab) actually publish on LinkedIn.
+v0.4 change: the user picks Post Type in the content template. The skill
+does NOT auto-detect. This file defines the **defaults** for each type:
+target length, default tone, default hashtag composition, and structural
+template.
 
-Codex detects the type from the input materials. If detection confidence
-is below 70%, Codex asks the user which type fits.
-
----
-
-## Type catalog
-
-| Type | When to use | Tone default | Length |
-|---|---|---|---|
-| `event_recap` | After an event happened — recap of what occurred, who spoke, what was learned | warm_professional | ~1,300 chars |
-| `upcoming_event` | Before an event — announcement with CTA to register/attend | warm_professional | ~700 chars |
-| `faculty_presentation` | A CDHAI faculty gave a talk, keynote, panel, or class guest lecture | warm_professional | ~1,000 chars |
-| `research_published` | New paper, white paper, or report released | warm_professional | ~1,200 chars |
-| `thought_leadership` | Op-ed style commentary on a current AI/health issue from CDHAI perspective | warm_professional | ~1,400 chars |
-| `awards_grants` | Grant won, prize received, ranking achievement | warm_playful | ~600 chars |
-| `people_announcement` | New faculty hire, student graduation, fellowship admission, milestone | warm_playful | ~750 chars |
-| `partnership_announcement` | New corporate affiliate, MOU, industry collaboration | warm_professional | ~800 chars |
-| `general` | Catch-all when none of the above fits | warm_professional | ~900 chars |
+The user can override the default tone in chat.
 
 ---
 
-## Detection signals (for Codex)
+## The nine types
 
-Codex scans the input materials for these signals:
+### 1. `event_recap`
 
-| Signal pattern | Likely type |
-|---|---|
-| Past-tense verbs + event name + date in past | `event_recap` |
-| "Join us", "Register", date in future | `upcoming_event` |
-| "[Faculty name] presented / gave keynote / spoke at" | `faculty_presentation` |
-| "New paper", "we publish", paper title, journal name | `research_published` |
-| Opinion framing, "What X means for Y", no specific event | `thought_leadership` |
-| "Awarded", "won grant", "received", funding amount | `awards_grants` |
-| "Welcome [name]", "congratulations to [name]", graduation, hire | `people_announcement` |
-| "Partnership with", "MOU", "corporate affiliate", company name | `partnership_announcement` |
-| None of the above match cleanly | `general` |
+A post recapping a recently-held event (conference, panel, talk, summit).
 
-**Confidence rule**: if the highest-scoring type is <70% confident OR the top
-two types are within 10% of each other → ASK the user. Don't guess.
+- **Default tone**: warm_professional
+- **Target length**: 1,200-1,400 characters
+- **Hashtags**: event tag (highest priority) + topic + branded
+- **Structure**: question hook → what happened → who spoke → what was discussed → why it mattered → thanks → hashtags
+- **Tense check**: Event Date must be in the past, ideally within 14 days.
+
+### 2. `upcoming_event`
+
+A save-the-date or invitation.
+
+- **Default tone**: warm_professional
+- **Target length**: 700-900 characters
+- **Hashtags**: event tag + topic + branded
+- **Structure**: hook (the question the event will address) → date and location → key speakers → who should come → registration link → hashtags
+- **Tense check**: Event Date must be in the future.
+
+### 3. `faculty_presentation`
+
+A CDHAI faculty member is presenting at an external venue.
+
+- **Default tone**: warm_professional
+- **Target length**: 800-1,000 characters
+- **Hashtags**: topic + branded + venue tag if applicable
+- **Structure**: framing of the topic → faculty name and what they're presenting → when and where → why the topic matters → hashtags
+
+### 4. `research_published`
+
+Announcement of a new paper / publication. Triggers Phase 3 (paper analysis).
+
+- **Default tone**: warm_professional
+- **Target length**: 800-1,200 characters
+- **Hashtags**: research topic + methodology tag + branded
+- **Structure**: question the paper addresses → authors → headline finding → methodology one-liner → implication → link to paper → hashtags
+
+### 5. `thought_leadership`
+
+CDHAI commentary on a topic in the news or in the field.
+
+- **Default tone**: formal_serious by default; user often overrides to warm_professional
+- **Target length**: 1,200-1,400 characters
+- **Hashtags**: topic + opinion-tag (#CDHAIperspective) + branded
+- **Structure**: hook on the topic → CDHAI's framing → supporting evidence (from CDHAI work) → forward-looking statement → hashtags
+
+### 6. `awards_grants`
+
+Funding wins, prizes, formal recognitions.
+
+- **Default tone**: warm_playful
+- **Target length**: 600-900 characters
+- **Hashtags**: branded + funder tag if applicable + topic
+- **Structure**: warm celebration → the award details → what it enables → who's leading → hashtags
+- **One emoji acceptable** (🎉 or 🏆) in this category only.
+
+### 7. `people_announcement`
+
+New hire, promotion, milestone, graduation.
+
+- **Default tone**: warm_playful
+- **Target length**: 500-800 characters
+- **Hashtags**: branded + topic of the person's work
+- **Structure**: welcome / congratulation → who they are → what they bring → looking forward → hashtags
+
+### 8. `partnership_announcement`
+
+CDHAI announces a collaboration with another institution / company.
+
+- **Default tone**: warm_professional
+- **Target length**: 800-1,000 characters
+- **Hashtags**: branded + partner tag + topic
+- **Structure**: announcement → who the partner is → what we'll work on together → why this combination matters → hashtags
+- **Flag**: partnership posts often require sponsor / partner clearance before publishing. The reviewer skill always flags partner mentions for verification.
+
+### 9. `general`
+
+Catch-all for anything that doesn't fit the above eight.
+
+- **Default tone**: warm_professional
+- **Target length**: 800-1,200 characters
+- **Hashtags**: per content, default 4
+- **Structure**: free-form, but must follow `linkedin_style.md` rules (question hook, specific anchors per paragraph, hashtags at end)
 
 ---
 
-## Length is automatic
+## Tones (three options)
 
-The length column above is the **target**, not a hard cap. Codex produces a
-single post sized to the type. If the user says "too long" or "too short" in
-chat feedback, that's a memory event (see `_rules/memory_policy.md`), not a
-reason to produce a second version up front.
+| Tone | Use for | Example opener |
+|---|---|---|
+| `warm_professional` | most posts (≈70%) | "What does an AI-ready health system actually require?" |
+| `warm_playful` | celebrations, milestones | "Three years in, and we're just getting started 🎉" |
+| `formal_serious` | privacy, policy, ethics, major institutional statements | "On AI governance in clinical practice, we want to make our position clear." |
 
-LinkedIn 2026 algorithm research (van der Blom): longer posts work well IF
-the dwell-time signal is strong. Don't pad; don't truncate. Hit the target
-naturally based on the input richness.
+Distribution observed in 50-post peer corpus analysis: warm_professional
+~70%, warm_playful ~25%, formal_serious ~5%.
+
+The user can override the default tone in chat after seeing the first draft.
 
 ---
 
-## Tone defaults explained
+## Length is a guideline, not a hard cap
 
-The default tone per type reflects what peer institutions actually publish:
+These character counts are observed averages for the corresponding type
+in peer institution posts (Stanford HAI, MIT Jameel, Wharton AI Lab,
+etc.). Skill aims for the target naturally based on input richness.
 
-- **warm_professional** is the dominant LinkedIn voice for academic AI centers
-  (~70% of Stanford HAI / MIT Jameel posts). Use this as baseline.
-- **warm_playful** for celebrations — grant wins, graduations, anniversaries.
-  More emoji density allowed (1-3 emoji); slightly more exclamation.
-- **formal_serious** is rarely the right call for LinkedIn. Reserve for
-  sensitive topics (e.g., privacy / ethics white paper release) or when the
-  user explicitly requests it.
+- If the user's Key Points provide enough substance for a longer post,
+  go longer. LinkedIn 2026 algorithm rewards dwell time.
+- If the Key Points are sparse, do not pad. A 600-character post that
+  earns engagement beats a 1,200-character post that loses readers.
 
-The user can override the default tone in any run. If overridden once, the
-skill applies it for that run only (see memory policy three-path rule).
+The reviewer flags drafts that are <60% of target (too thin) or >140% of
+target (overlong).

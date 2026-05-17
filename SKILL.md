@@ -1,231 +1,424 @@
 ---
 name: cdhai-social-media-officer-linkedin
-version: 0.3.0
+version: 0.4.2
 description: |
-  Generates a polished LinkedIn post draft from a folder of CDHAI / Carey
-  source materials (event recap, research, faculty talk, grant announcement,
-  etc.). Produces Word output ready for human review and copy-paste to
-  LinkedIn. Designed for non-technical users (MarComm, Jennifer, Upasana)
-  via Codex App; CLI route available for power users.
+  Generates a polished LinkedIn post draft from a folder containing a filled-in
+  Word content template plus supporting materials (PDFs, images, research papers).
+  Uses Codex's native multimodal capabilities for vision, paper analysis, and
+  quality review. Helpers handle only deterministic work (web search, PDF
+  text extraction, docx building). No external OpenAI API key required.
+  Auto-invokes cdhai-content-reviewer as a sub-agent for independent quality
+  review. Performs visual-to-semantic image matching against each Key Point
+  with diversity constraints (no single subject dominates the picks).
 trigger:
   - I want to draft a LinkedIn post
   - use cdhai-social-media-officer-linkedin
-  - generate a LinkedIn draft
+  - draft a CDHAI LinkedIn post
+  - generate a LinkedIn post from my folder
   - write a LinkedIn post about
 ---
 
-# CDHAI Social Media Officer — LinkedIn
+# CDHAI Social Media Officer — LinkedIn (v0.4.2)
 
-A single-skill draft generator for the Center for Digital Health and
-Artificial Intelligence (CDHAI) at Johns Hopkins Carey Business School.
+A draft generator for the Center for Digital Health and Artificial
+Intelligence (CDHAI) at Johns Hopkins Carey Business School.
 
-Companion skill: **cdhai-content-reviewer** — runs after this skill to
-flag typos, brand inconsistencies, hype density, and items needing human
-verification. The two skills are designed to work together.
+**v0.4.2 architecture**: this skill is designed to run in Codex App,
+which is itself powered by GPT-5. All vision tasks, all language tasks,
+and all judgment-based checks are performed by Codex directly — the
+skill does NOT call out to a separate OpenAI API. Helpers exist only
+for deterministic operations: PDF text extraction (`pypdf`), web HTML
+scraping, image file building, and Word document construction.
+
+**Companion skill**: `cdhai-content-reviewer` runs automatically at the
+end of every run, invoked as a **Codex sub-agent** for independent
+context (fresh-eyes pass). The user invokes one skill; both run; one
+merged report is produced.
 
 ---
 
 ## Phase 0 — Bootstrap
 
-Run once on first invocation per machine:
-
-1. Verify `~/.cdhai-linkedin-skill/` exists. If not, run `install.sh`.
-2. Check `VERSION` against `https://github.com/wgu12345/cdhai-social-media-officer-linkedin.skill/blob/main/VERSION` — warn if local version is behind.
-3. Load `~/.cdhai-linkedin-skill/config.json` for API keys (Unsplash, DALL-E).
-   - If keys are missing, note in report and skip those asset sources.
+1. Verify `~/.cdhai-linkedin-skill/` exists. If not, run `install.sh` from the skill directory.
+2. Check `VERSION` against the GitHub remote — warn if local version is behind.
+3. Load `~/.cdhai-linkedin-skill/config.json`. The only optional key is `serpapi_key` (cleaner web search for Tier 2 face identification). All AI work is done by Codex; no API key required.
 4. Detect user language from chat. Default English.
 
 ---
 
-## Phase 1 — Read inputs and detect content type
+## Phase 1 — Read the user's folder
 
 1. Locate the user's working folder (provided in the chat or via project context).
-2. Read all files in `_rules/` — these are authoritative for this run.
+2. Read all files in `_rules/` — authoritative for this run.
 3. Read `~/.cdhai-linkedin-skill/memory/user_memory.md` — accumulated user rules.
-4. Read the main content file: priority order `content.md` → `content.txt` → `content.docx` → `content.pdf`.
-5. **Detect content_type** using rules in `_rules/content_types.md`.
-   - Compute confidence per candidate type
-   - If top type ≥70% confident → use it
-   - If top type <70% OR top two within 10% → **ask the user** which fits
-   - Acceptable types: `event_recap`, `upcoming_event`, `faculty_presentation`, `research_published`, `thought_leadership`, `awards_grants`, `people_announcement`, `partnership_announcement`, `general`
-6. Set `tone` to the default for the detected `content_type` (see `_rules/content_types.md`). User can override in chat.
-7. Set `target_length` to the chars target for the detected type.
+4. **Scan the folder for ALL file types — no priority order**:
+   - **Word documents (`.docx`, `.doc`)** — primary structured content
+   - **PDFs** — research papers, agendas, slide exports, conference programs
+   - **Images** (`.jpg`, `.png`, `.heic`, etc.) — visual candidates for the post
+   - **Text files** (`.txt`, `.md`) — supplementary notes
+
+5. **Find the Content Template**: locate a Word document following `_template/content_template.docx` structure with these sections:
+   - `Purpose`, `Post Type`, `Date`, `Key Points`, `Background / Source Materials`, `Notes for the writer`
+
+6. **If no compliant Word template is found** → stop. Instruct the user to fill in `_template/content_template.docx` and re-run.
+
+7. **Parse the template**. Extract the structured fields.
+
+8. **Validate required fields**:
+   - `Post Type` must be one of the nine listed in `_rules/content_types.md`. If missing or invalid → ask the user to pick.
+   - `Date` must be present. If missing → ask.
+   - `Key Points` must contain at least one item. If empty → stop and ask.
+   - `Purpose` must be present. If missing → ask.
+
+9. **No content type auto-detection.** The user picked it. Respect it.
 
 ---
 
-## Phase 2 — Asset acquisition
+## Phase 2 — Date fact-check
 
-Follow the flow in `_rules/asset_policy.md`:
+Detailed spec: `_rules/date_factcheck.md`.
 
-1. Check `images/` folder
-2. Try extraction from PDF/DOCX content
-3. If still none → **ask user** for: Unsplash search / DALL-E generation / text-only
-4. Never silently proceed without consulting user when images are absent
+Codex knows today's actual date from runtime. For every date-anchored
+claim in the source materials:
 
-Helpers available:
-- `_helpers/unsplash_search.py <keywords>` — CC-licensed photo search
-- `_helpers/dalle_generate.py <prompt>` — DALL-E image generation
-- Both require API keys in `~/.cdhai-linkedin-skill/config.json`
-
----
-
-## Phase 3 — Style extraction (optional)
-
-If user provided `style_reference.{txt,html,pdf}`:
-
-1. If URL is provided as plain text → fetch and parse
-2. If fetch returns 403 (Carey blocks bots) → **instruct user** to download as HTML or PDF; don't silently fail
-3. Extract: palette signals, typography family, structural rhythm
-4. Save extracted profile to `~/.cdhai-linkedin-skill/cache/style_profile_<hash>.json`
-5. Pass profile to Phase 4
-
-If not provided, proceed without style extraction.
+1. **Compare** the user's Event Date against today's date.
+2. **Compute** the natural-language reference for the post ("yesterday", "last week", "earlier this month", etc.).
+3. **Cross-reference** against dates found in supporting PDFs. Mismatches → log as date conflicts, omit dates from draft until resolved.
+4. **Flag temporal inconsistencies** (Post Type ↔ tense mismatches).
+5. Log all date reasoning in the report under "Date verification".
 
 ---
 
-## Phase 4 — Content generation
+## Phase 3 — Paper analysis (when applicable)
 
-Generate ONE LinkedIn post draft (not two; see `content_types.md` for why
-length is automatic, not a user choice up-front).
+Detailed spec: `_rules/paper_analysis.md`.
 
-Inputs to this phase:
-- Main content file (parsed)
-- `_rules/inspiration_corpus.md` — peer institution voice
-- `_rules/linkedin_style.md` — what to prefer, what to use sparingly
-- `_rules/brand_rules.md` — naming, capitalization, hashtag policy
-- `user_memory.md` — accumulated user rules (highest precedence)
-- Detected content_type, tone, target_length
+If Post Type is `research_published` OR a research paper PDF is detected
+in the folder:
 
-Generation principles:
+### Step 3a — Extract text
 
-- **Polish only, never invent.** If a fact isn't in the input → either omit
-  or ask the user (see Phase 4b).
-- **Match the inspiration corpus voice** (described in `inspiration_corpus.md`).
-- **No banned words** — see `linkedin_style.md` for the density-based judgment that replaces a banlist.
-- Hashtags at end, 3-5 with default 4, composition per `brand_rules.md`.
-- Length: hit the target naturally based on input richness. Don't pad. Don't truncate.
+```bash
+python3 _helpers/pdf_paper_extract.py <paper.pdf>
+```
 
-### Phase 4b — Ask-when-missing
+This returns JSON with `first_two_pages` (where title/authors/abstract
+typically live) and `full_text_chunks` (paragraph-bounded chunks of the
+full text). **No LLM call inside the helper** — Codex analyzes the
+returned text directly.
 
-Before finalizing, scan the draft for any claim that a thoughtful reader
-would have to Google to verify. For each:
+### Step 3b — Codex analyzes the extracted text
 
-- Is the source of truth in the input materials? → cite, proceed.
+**You (Codex) read the extracted text and produce a structured paper
+bundle.** Output ONLY this JSON, no other text:
+
+```json
+{
+  "metadata": {
+    "title": "string or null",
+    "authors": [{"name": "string", "affiliation": "string or null"}],
+    "abstract": "verbatim abstract or null",
+    "keywords": ["..."],
+    "venue": "journal / conference / 'Working paper' / null",
+    "doi": "string or null",
+    "publication_date": "YYYY-MM or YYYY-MM-DD or null",
+    "page_count": <integer>
+  },
+  "substance": {
+    "key_findings": [
+      {"finding": "string", "source_chunk_index": <int>}
+    ],
+    "methodology_one_sentence": "...",
+    "implications_one_sentence": "...",
+    "limitations_one_sentence": "... or null",
+    "audience_friendly_takeaway": "one paragraph"
+  }
+}
+```
+
+**Anti-hallucination contract** (hard):
+- Every `finding` MUST trace to a specific chunk index from the helper output.
+- Never strengthen the paper's claims (no "massive 12% improvement" if the paper says "average improvement of 12%").
+- Never extend findings beyond their stated scope.
+- If a field is genuinely absent, return `null`. Do not fabricate.
+
+### Step 3c — Author identification
+
+For each author, run:
+```bash
+python3 _helpers/face_compare.py --identify "<author name>"
+```
+
+This is the deterministic part (web search + headshot download). The
+helper returns a cached reference photo path. Codex uses these reference
+photos in Phase 5 Tier 2 (face comparison done natively by Codex looking
+at both images, NOT via an external API call).
+
+Tag each author as `faculty_internal` / `student_or_postdoc` / `external_collaborator`.
+
+### Step 3d — Save the bundle
+
+Save the bundle to `~/.cdhai-linkedin-skill/cache/paper_<run_id>.json`.
+
+---
+
+## Phase 4 — Image analysis (Tier 1: describe everything, batched)
+
+For every image file in the folder + every image extracted from PDFs:
+
+### Batched processing (mitigation #2)
+
+Codex processes images in **batches of 5** to avoid context window
+pressure and attention degradation:
+
+For each batch of 5 images:
+1. **Look at the 5 images directly** (Codex is multimodal native).
+2. **Produce 5 entries** in the manifest, each strictly matching this JSON shape:
+
+```json
+{
+  "path": "/absolute/path/to/image.jpg",
+  "scene_summary": "1-2 sentence factual description",
+  "people_count_approx": <integer>,
+  "named_subjects_visible": [],
+  "visible_text": ["banner text", "signage"],
+  "setting": "indoor_podium | indoor_panel | indoor_classroom | indoor_lab | indoor_reception | indoor_office | outdoor_campus | outdoor_other | screenshot | document | unclear",
+  "estimated_quality": "high | medium | low",
+  "tags": ["short", "descriptive", "tags"]
+}
+```
+
+3. **Append the batch** to `~/.cdhai-linkedin-skill/cache/image_manifest_<run_id>.jsonl` (one JSON per line).
+4. **Summarize the batch's results in one line** to keep in context: e.g. "Batch 1/3: 3 podium shots of Gordon, 1 panel shot of Ritu, 1 audience wide shot."
+5. **Discard the detailed manifest from active context** and move to the next batch. The manifest file on disk is the source of truth.
+
+**Hard rules for the JSON output:**
+- Be factual; do not interpret or speculate.
+- `named_subjects_visible` only contains names IF you can identify them with high confidence (e.g., visible name tag, recognized from reference photos cached earlier). If unsure, leave empty.
+- `visible_text` includes ONLY text actually legible in the image.
+- Reply with valid JSON per image, one per line. NO prose before, between, or after the JSON entries.
+
+---
+
+## Phase 5 — Key Point ↔ Image matching
+
+### Step 5a — Per-Key-Point semantic matching (Tier 1)
+
+For each Key Point in the template, Codex:
+
+1. Constructs a target description from the Key Point text.
+2. Reads the image manifest from disk.
+3. Scores every image's manifest entry against the target on:
+   - Topic match (scene type fits?)
+   - Setting match (institutional signage?)
+   - Object match (whiteboard, slides, named subjects, etc.)
+4. Scores 0-1. ≥0.7 = strong match. 0.4-0.7 = partial. <0.4 = unrelated.
+
+### Step 5b — Specific person identification (Tier 2)
+
+If a Key Point names a specific person AND no strong Tier 1 match exists:
+
+1. Run the identify helper:
+   ```bash
+   python3 _helpers/face_compare.py --identify "<Full Name>"
+   ```
+   This is deterministic web search + headshot download. Returns cached reference path.
+
+2. **Codex directly compares the reference photo against each candidate image** by looking at both. No API call. Output:
+   ```json
+   {
+     "candidate_path": "/path/to/candidate.jpg",
+     "reference_path": "/path/to/reference.jpg",
+     "same_person_confidence": <0.0 to 1.0>,
+     "justification": "one short sentence"
+   }
+   ```
+
+3. Decide per Key Point:
+   - **≥0.8** → high-confidence match → assign + note "Identified as <name> via web reference comparison" in the report.
+   - **0.5-0.8** → possible match → assign tentatively + flag "verify before posting".
+   - **<0.5** → fall through to Tier 3.
+
+### Step 5c — Diversity check (NEW in v0.4.2)
+
+Detailed spec: `_rules/image_diversity.md`.
+
+After per-Key-Point matching produces tentative assignments:
+
+1. **Tally subjects** (named people across all picks).
+2. **Tally scene types**.
+3. **Enforce caps**: no single named person in more than 2 picks (out of 5 — scales for larger sets); no single scene type in more than 2 picks.
+4. **If violated**:
+   - Keep the top-confidence picks for the over-represented subject/scene
+   - Release the lower-confidence picks
+   - Re-match the released Key Points using alternative candidates
+   - If no alternative scores ≥ 0.5 → trigger Tier 3 (Phase 6) for that Key Point.
+
+The goal: **every Key Point gets an image AND visual variety is preserved.**
+Gordon doesn't take 3 of 5 slots just because he's in 8 of 13 photos.
+
+---
+
+## Phase 6 — Missing-image fallback (Tier 3)
+
+For any Key Point without a matched image (Tier 1 < 0.4 AND Tier 2 <
+0.5, OR released by Phase 5c diversification), the skill consults the
+user. Verbatim prompt:
+
+```
+The Key Point "<exact text>" has no matching image in your folder.
+
+Pick one:
+(a) Provide your own image — I'll wait, then re-run.  [RECOMMENDED]
+(b) Generate with Codex's built-in $imagegen skill.
+    (AI-generated; flagged in report.)
+    Suggested prompt: <auto-generated prompt>
+(c) Search the web for an image.
+    ⚠ WEB-SOURCED IMAGES REQUIRE MANUAL USAGE-RIGHTS VERIFICATION
+    BEFORE POSTING.
+    Suggested keywords: <auto-generated keywords>
+(d) Skip this Key Point's visual anchor.
+```
+
+Behavior per choice:
+
+- **(a)** → polite exit, user re-runs.
+- **(b)** → **invoke Codex's built-in `$imagegen` skill** directly (the `image_gen` native tool, which uses your ChatGPT plan, NOT an API key). Save output to `~/.cdhai-linkedin-skill/cache/imagegen_<hash>.png`. Mark `source: "codex_imagegen"`, add to `ai_generated_disclosures`.
+- **(c)** → run `python3 _helpers/web_image_search.py "<keywords>" --max 5`, show candidates with titles + source pages, user picks by index, run `--download <N>`. Mark `source: "web_search"`. **Triggers the prominent legal warning section at the top of `before_you_post.docx`** and a CRITICAL reviewer flag until user confirms usage rights.
+- **(d)** → record the skip.
+
+**Output target**: at minimum **5 distinct images** in the final draft.
+
+---
+
+## Phase 7 — Content generation
+
+Generate ONE LinkedIn post draft (markdown internally; converted to docx
+in Phase 9). Inputs:
+
+- Parsed content template
+- Paper bundle (if applicable) from Phase 3
+- Image manifest with Key Point assignments
+- `_rules/inspiration_corpus.md`, `_rules/linkedin_style.md`, `_rules/brand_rules.md`
+- `user_memory.md` (highest precedence)
+
+**Generation rules (hard):**
+
+1. **Every Key Point MUST appear in the post.** If a Key Point cannot be naturally worked in → stop and ask the user.
+2. **Every body paragraph MUST have a specific anchor**: a named person with full name + title (first mention), or a named session / paper / publication, or a specific number with source, or a specific quote with source. Otherwise the reviewer flags as "too generic" and rejects.
+3. **Polish only, never invent.** Verify-by-Googling test: if a thoughtful reader would Google a claim, the claim must be sourced or asked.
+4. **Voice**: `inspiration_corpus.md`. Open with a question, a concrete moment, a number, or a direct quote.
+5. **Length**: per Post Type, per `content_types.md`.
+6. **Hashtags**: 3-5 at end, default 4. Per `brand_rules.md`.
+
+### Phase 7b — Ask-when-missing
+
+Before finalizing, scan the draft for claims a thoughtful reader would
+have to Google. For each:
+- Source-of-truth in input materials? → cite, proceed.
 - Not in input materials? → **ASK the user**.
 
-Categories that commonly trigger this:
-- Name spelling (especially transliteration variants — Aggarwal vs Agarwal)
-- Name completeness (first, last, title, role)
-- Date anchoring ("yesterday" without anchor date)
-- Location specificity ("at Hopkins" — which campus?)
-- Numeric claims without source ("60% improvement" with no citation)
-- Attribution ambiguity ("the team said X" — which team?)
-- Acronym not expanded on first use
+---
 
-This is a principle, not a checklist. Apply the verify-by-Googling test.
+## Phase 8 — Auto-invoke reviewer (as Codex sub-agent)
+
+Mitigation #1: the reviewer runs in a **Codex sub-agent**, not as a
+continuation of the current Codex turn. This gives the reviewer a fresh
+context — independent eyes, no bias toward approving the writer's own
+draft.
+
+### Step 8a — Save inputs for the reviewer
+
+1. Save the working draft to `~/.cdhai-linkedin-skill/cache/working_draft_<run_id>.md`.
+2. Ensure the image manifest, Key Points, and paper bundle (if any) are saved to cache.
+
+### Step 8b — Invoke sub-agent
+
+Use Codex's sub-agent mechanism (the `@subagent` or equivalent), passing:
+
+```
+Sub-agent task: cdhai-content-reviewer
+
+Inputs:
+  draft_path: ~/.cdhai-linkedin-skill/cache/working_draft_<run_id>.md
+  folder_path: <user's folder>
+  content_template: <path to content.docx>
+  image_manifest: ~/.cdhai-linkedin-skill/cache/image_manifest_<run_id>.jsonl
+  paper_bundle: <optional path>
+  key_points: [list]
+
+Return structured JSON findings (per cdhai-content-reviewer's SKILL.md).
+```
+
+The sub-agent reads `cdhai-content-reviewer.skill/SKILL.md`, runs the 9
+checks, and returns structured JSON. Because the sub-agent starts with a
+fresh context, it does NOT see the writer's intermediate reasoning — only
+the final draft, like a real second reviewer would.
+
+### Step 8c — Handle reviewer findings
+
+1. Parse the sub-agent's JSON response.
+2. **If `summary.ship_recommendation == "BLOCK"`** (any CRITICAL):
+   - Revise the draft based on the CRITICAL items.
+   - Re-invoke the reviewer sub-agent on the revised draft.
+   - Maximum 3 revision loops.
+3. **If `summary.ship_recommendation == "REVISE"`** (no critical, 3+ warnings):
+   - Address WARNING items where reasonable.
+   - Optionally re-invoke reviewer for a second pass.
+4. **If `summary.ship_recommendation == "SHIP"`**: proceed.
+
+After 3 revision loops, output the latest draft and surface all
+unresolved CRITICALs in the report. The user makes the final call.
+
+### Step 8d — Merge findings into the report
+
+The reviewer's findings get merged into the writer's
+`before_you_post.docx`. The reviewer does NOT write its own file in
+auto mode.
 
 ---
 
-## Phase 5 — Visual layout planning
+## Phase 9 — Output assembly
 
-Rank the images Codex has available (uploaded + extracted + searched + generated):
-
-1. Semantic match to post content (image of the keynote speaker if post is about that keynote)
-2. Source priority: user-provided > PDF-extracted > Unsplash > DALL-E
-3. Resolution (≥1200px wide preferred)
-4. Recency
-
-**Picking rule** (see `asset_policy.md`):
-- Total images < 10 → show all, ranked
-- Total images ≥ 10 → pick top 10, ranked
-
-The report.docx lists the ranking with a one-line reason per image. **User
-makes the final pick.** Don't pre-decide 1-3 for them.
-
----
-
-## Phase 6 — Asset processing
-
-For each image the user might pick:
-
-- Resize to LinkedIn-friendly dimensions per `brand_rules.md`:
-  - Banner: 1200×627 (1.91:1)
-  - Inline/square: 1080×1080 (1:1)
-- Apply Carey logo watermark for non-CDHAI photos (15% opacity, bottom-right)
-- Save processed images to `images_used/` next to the draft
-
-The user opens `images_used/` locally to preview before publishing.
-
----
-
-## Phase 7 — Review pass (handoff to reviewer skill)
-
-After this skill completes Phase 6:
-
-1. Save all output files to the user's working folder
-2. Invoke `cdhai-content-reviewer` skill with the working folder as input
-3. Reviewer produces `review_report.docx`
-4. Reviewer findings (counts of critical / warning / suggestion) appear in
-   our own `report.docx` summary section
-
-Reviewer checks:
-- Typos and grammar
-- Brand consistency (naming, capitalization, hyphenation)
-- Factual flags — uncited numbers, dates, names → flagged for human verification
-- Hype density (per `linkedin_style.md` rule, not a banlist)
-- Severity levels: critical / warning / suggestion
-
----
-
-## Phase 8 — Output assembly
-
-Working markdown is converted to Word using `_helpers/build_docx.py`. All
-deliverables are `.docx` so non-technical users can open them directly.
-
-**Output files** (in the user's working folder):
+Two deliverables, both `.docx`:
 
 | File | Purpose |
 |---|---|
-| `linkedin_post.docx` | The primary deliverable — copy-paste source for LinkedIn |
-| `report.docx` | Posting instructions, image ranking, what changed, items needing verification, AI-image disclosure |
-| `review_report.docx` | Reviewer skill output — typo / brand / hype density findings |
-| `images_used/` | Processed image candidates (ranked top 10 or all if <10) |
+| `linkedin_post.docx` | The post text with **inline embedded images**. Each Key Point's paragraph appears with its matched image right below. Hashtags at end. Copy-paste-ready for LinkedIn. |
+| `before_you_post.docx` | Single merged report: legal-warning banner (if any web-sourced images), must-verify items, decisions, image picks with diversity check, quality checks, optional paper info, posting instructions. |
 
-Conversion command (Codex runs internally):
+Conversion handled by `_helpers/build_docx.py` (deterministic — python-docx).
 
-```bash
-python3 _helpers/build_docx.py <input.md> <output.docx> --images images_used/*
-```
+**No `.md` files in output.** All working markdown stays in cache.
 
-The helper embeds images inline in the .docx and color-codes severity
-labels (CRITICAL/WARNING/SUGGESTION) for the report.
-
-**No `.md` output** in v0.3.0. Markdown is the working format; users see
-only Word.
+**Optional PDF export**: if the user asks, the skill also produces `linkedin_post.pdf` via `soffice` or `weasyprint`.
 
 ---
 
-## Phase 9 — Memory and feedback
+## Phase 10 — Memory and feedback
 
-After delivering output, the skill waits for user feedback in chat.
+Three-path per `_rules/memory_policy.md`:
 
-Feedback handling follows the three-path rule in `_rules/memory_policy.md`:
+1. **Decline** — discard, no record.
+2. **This run only** — apply, log in `before_you_post.docx`, no memory write.
+3. **Save as permanent rule** — apply, translate informal feedback to formal rule, append to `user_memory.md`, log in `memory_change_log.md`.
 
-1. **Decline** — discard, no record
-2. **This run only** — apply now, log in `report.docx`, no memory write
-3. **Save as permanent rule** — apply now + translate informal feedback to formal rule + append to `user_memory.md` + log in `memory_change_log.md`
-
-Codex always **asks** which path before writing to memory. Never silently
-saves rules.
+Codex always **asks which path** before writing to memory.
 
 ---
 
 ## Constraints
 
-- **English only.** No multi-language support in v0.3.0 (LinkedIn for CDHAI is English audience).
-- **No direct posting.** The skill produces drafts. Human review required before publishing. Compliance: Gordon's directive, May 10 2026 meeting.
-- **Images optional but strongly recommended.** Text-only posts are allowed but flagged in report as "consider adding visual" — LinkedIn engagement is 2-3x higher with images.
-- **API keys are user-provided.** Skill never ships with keys. Missing keys → fallback to user-provided / extracted images only.
+- **English only.** Multilingual on the v0.6 roadmap.
+- **No direct posting.** Drafts only. Human review required.
+- **Word document required as primary input.** Text-only and markdown-only inputs are rejected with an instructive error message.
+- **No external OpenAI API key required.** v0.4.2 uses Codex's native multimodal + LLM capabilities. Helpers are deterministic only.
+- **Image generation goes through Codex's built-in `$imagegen` skill.** Uses your ChatGPT plan allocation, not API credits.
+- **Web access required.** Tier 2 face identification fetches JHU / Carey pages; Tier 3 (c) searches the web.
+- **Web-sourced images require manual usage-rights verification before posting.** Enforced by a prominent warning section in `before_you_post.docx` and CRITICAL reviewer flag.
+- **Reviewer must run as a Codex sub-agent** for independent context. Never in-line in the writer's turn.
+- **Image processing is batched** (5 per batch) to avoid context window pressure.
+- **Diversity constraints**: no single subject or scene type dominates the final picks.
 
 ---
 
@@ -234,46 +427,35 @@ saves rules.
 ```
 cdhai-social-media-officer-linkedin.skill/
 ├── SKILL.md                          ← you are here
-├── VERSION                           ← 0.3.0
+├── VERSION                           ← 0.4.2
 ├── README.md
 ├── install.sh
 ├── skill.config.json
 ├── _rules/
-│   ├── content_types.md              ← NEW in v0.3
-│   ├── linkedin_style.md             ← NEW in v0.3 (replaces banned_words)
-│   ├── asset_policy.md               ← NEW in v0.3
-│   ├── inspiration_corpus.md         ← updated with tone analysis
-│   ├── brand_rules.md                ← updated hashtag policy
-│   ├── memory_policy.md              ← updated 3-path clarity
-│   ├── core_rules.md
+│   ├── content_types.md              ← 9 types, lengths, tones
+│   ├── linkedin_style.md             ← hype density, hook patterns
+│   ├── asset_policy.md               ← high-level image routing
+│   ├── image_matching.md             ← Tier 1/2/3 spec
+│   ├── image_diversity.md            ← NEW v0.4.2: per-subject + per-scene caps
+│   ├── paper_analysis.md             ← Phase 3 spec
+│   ├── date_factcheck.md             ← Phase 2 spec
+│   ├── inspiration_corpus.md         ← peer institution voice
+│   ├── brand_rules.md                ← naming, hashtags, capitalization
+│   ├── memory_policy.md              ← three-path memory
+│   ├── core_rules.md                 ← never invent, never auto-post
 │   └── permission_policy.md
 ├── _template/
-│   ├── linkedin_post_template.md
-│   └── report_template.md            ← updated with "Ready to publish"
+│   └── content_template.docx         ← Word template
+├── _helpers/                         ← DETERMINISTIC ONLY in v0.4.2
+│   ├── build_docx.py                 ← python-docx post + report builder
+│   ├── face_compare.py               ← --identify only (web search + download)
+│   ├── pdf_paper_extract.py          ← pypdf text only (Codex analyzes the text)
+│   └── web_image_search.py           ← Bing/DDG scraping (no API key)
 ├── _memory_template/
 │   ├── user_memory.md
 │   └── memory_change_log.md
-├── _helpers/
-│   ├── build_docx.py                 ← NEW in v0.2.1 / 0.3
-│   ├── unsplash_search.py
-│   └── dalle_generate.py
-├── examples/
-│   └── sample-cheetah-content.md
-└── docs/
-    └── usage.md
+├── docs/
+│   └── team-guide.md
+└── examples/
+    └── filled-template-example/
 ```
-
----
-
-## What changed in v0.3.0 vs v0.2
-
-- Output is `.docx` not `.md` (Gordon's directive: "we love to see pages")
-- Content types: 5 → 9 (added awards_grants, people_announcement, partnership_announcement, general)
-- Length: automatic per content_type, not user-chosen short vs standard
-- Hashtags: 3-5 default 4 (was hard ≤3 inherited from Carey website policy; LinkedIn norm differs)
-- Banned words list dropped — replaced with density-based judgment in reviewer skill
-- Image picking: top 10 ranked (was pre-decided 1-3)
-- Inspiration corpus formalized with tone analysis (warm_professional dominant)
-- Memory three-path documented clearly in `memory_policy.md`
-- Asset fallback flow when no images uploaded
-- `report.docx` includes "Ready to publish" instructions

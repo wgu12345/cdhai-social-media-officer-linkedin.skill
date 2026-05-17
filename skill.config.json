@@ -1,45 +1,61 @@
 {
   "name": "cdhai-social-media-officer-linkedin",
-  "version": "0.3.0",
-  "description": "Generates polished LinkedIn post drafts from a folder of CDHAI / Carey source materials. Outputs Word documents ready for human review.",
-  "owner": "wgu12345",
+  "version": "0.4.2",
+  "description": "LinkedIn post generator for CDHAI / Johns Hopkins Carey Business School. Takes a folder with a filled-in Word content template plus supporting materials. Uses Codex's native multimodal capabilities for all vision, paper analysis, and LLM work — no external OpenAI API key required. Auto-invokes cdhai-content-reviewer as a Codex sub-agent for independent quality review. Produces a Word draft with inline embedded images and a single merged verification report. Includes image diversity constraints (no single subject dominates picks) and mandatory usage-rights verification for web-sourced images.",
+  "maintainer": "Wenying Gu",
   "repository": "https://github.com/wgu12345/cdhai-social-media-officer-linkedin.skill",
   "companion_skill": "cdhai-content-reviewer",
-  "platform": "codex",
-  "platform_versions": ["codex-app", "codex-cli"],
-  "language": "en",
+  "auto_invokes": ["cdhai-content-reviewer", "$imagegen"],
   "triggers": [
-    "use the cdhai-social-media-officer-linkedin skill",
-    "draft a LinkedIn post for CDHAI",
-    "generate a LinkedIn post",
-    "write a LinkedIn post about",
-    "create a LinkedIn draft"
+    "I want to draft a LinkedIn post",
+    "use cdhai-social-media-officer-linkedin",
+    "draft a CDHAI LinkedIn post",
+    "generate a LinkedIn post from my folder",
+    "write a LinkedIn post about"
   ],
-  "required_files_in_input_folder": [
-    "content.{md,txt,docx,pdf}"
-  ],
-  "optional_files_in_input_folder": [
-    "images/",
-    "style_reference.{txt,html,pdf}"
-  ],
-  "output_files": [
-    "linkedin_post.docx",
-    "report.docx",
-    "review_report.docx",
-    "images_used/"
+  "required_inputs": {
+    "content_template": ".docx with Purpose, Post Type, Date, Key Points sections"
+  },
+  "supported_input_file_types": [".docx", ".doc", ".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp", ".txt", ".md"],
+  "outputs": [
+    "linkedin_post.docx (with inline embedded images)",
+    "before_you_post.docx (merged verification report)",
+    "linkedin_post.pdf (optional, on user request)"
   ],
   "external_apis": {
-    "unsplash": {
-      "purpose": "CC-licensed photo search when user folder has no images",
-      "required_key": "unsplash_access_key",
-      "key_location": "~/.cdhai-linkedin-skill/config.json"
+    "openai": {
+      "required": false,
+      "removed_in": "v0.4.2",
+      "note": "All AI work now done by Codex natively. The openai package is no longer a dependency."
     },
-    "openai_dalle": {
-      "purpose": "AI image generation when user folder has no images",
-      "required_key": "openai_api_key",
-      "key_location": "~/.cdhai-linkedin-skill/config.json",
-      "disclosure_required": true
+    "codex_native": {
+      "required": "via Codex App",
+      "purpose": "Multimodal vision (image description, face comparison), LLM text analysis (paper, post generation, reviewer checks), structured output."
+    },
+    "codex_imagegen": {
+      "required": "via Codex App",
+      "purpose": "AI image generation (Tier 3 option b). Uses Codex's ChatGPT plan allocation."
+    },
+    "web_image_search": {
+      "required": false,
+      "purpose": "Tier 3 option (c). Bing Images / DuckDuckGo via HTML scraping. No API key.",
+      "warning": "Web-sourced images require manual usage-rights verification before posting."
+    },
+    "serpapi": {
+      "required": false,
+      "purpose": "Cleaner Tier 2 face-identification web search. Falls back to DuckDuckGo HTML if absent."
+    },
+    "web_access": {
+      "required": true,
+      "purpose": "Tier 2 face identification fetches official faculty/staff pages; Tier 3 (c) searches the web for images."
     }
   },
-  "memory_location": "~/.cdhai-linkedin-skill/memory/"
+  "v0_4_2_architecture": {
+    "principle": "All AI/vision/LLM work performed by Codex natively. Helpers are deterministic only.",
+    "mitigations": [
+      "Reviewer runs as Codex sub-agent (independent context, fresh-eyes pass)",
+      "Image processing in batches of 5 (avoid context window pressure)",
+      "Strict JSON output specs in SKILL.md with examples"
+    ]
+  }
 }

@@ -1,93 +1,103 @@
 #!/usr/bin/env bash
-# install.sh — Bootstrap for cdhai-social-media-officer-linkedin.skill v0.3.0
+# Installer for cdhai-social-media-officer-linkedin.skill v0.4.0
 #
-# Usage:
-#   bash install.sh
-#
-# What it does:
-#   1. Creates ~/.cdhai-linkedin-skill/ (config + memory + cache)
-#   2. Installs Python dependencies
-#   3. Copies memory templates on first install (preserves existing memory on re-install)
-#   4. Creates default config.json if missing
-#   5. Tries to symlink into ~/.codex/skills/ if Codex CLI is installed
+# Creates ~/.cdhai-linkedin-skill/ with memory + config templates.
+# Installs Python dependencies. Symlinks the skill into ~/.codex/skills/.
+# Existing memory and config are preserved on re-install.
 
-set -e
+set -euo pipefail
 
-SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
-HOME_DIR="$HOME/.cdhai-linkedin-skill"
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_NAME="cdhai-social-media-officer-linkedin"
+HOME_BASE="$HOME/.cdhai-linkedin-skill"
+CACHE_DIR="$HOME_BASE/cache"
+MEMORY_DIR="$HOME_BASE/memory"
+CODEX_SKILLS_DIR="$HOME/.codex/skills"
+VERSION_FILE="$SKILL_DIR/VERSION"
+VERSION="$(cat "$VERSION_FILE" 2>/dev/null || echo unknown)"
 
-echo "==> Installing cdhai-social-media-officer-linkedin v$(cat "$SKILL_DIR/VERSION")"
-echo "    Source: $SKILL_DIR"
-echo "    Target: $HOME_DIR"
+echo "=================================================="
+echo "  CDHAI LinkedIn Skill — installer (v$VERSION)"
+echo "=================================================="
+
+# ----- Python dependencies -----
 echo ""
+echo "[1/5] Installing Python dependencies (deterministic helpers only)..."
+python3 -m pip install --break-system-packages --quiet \
+    pypdf \
+    python-docx \
+    Pillow \
+    requests \
+    beautifulsoup4 \
+    || {
+        echo "  Falling back without --break-system-packages..."
+        python3 -m pip install --quiet \
+            pypdf python-docx Pillow requests beautifulsoup4
+    }
+echo "  ✓ Done. (No openai package needed — Codex handles all AI work natively.)"
 
-# 1. Create home directory structure
-mkdir -p "$HOME_DIR/memory" "$HOME_DIR/cache"
+# ----- ~/.cdhai-linkedin-skill/ layout -----
+echo ""
+echo "[2/5] Setting up home directory at $HOME_BASE..."
+mkdir -p "$HOME_BASE" "$CACHE_DIR" "$MEMORY_DIR"
+echo "  ✓ Directories ready."
 
-# 2. Python dependencies
-echo "==> Installing Python dependencies"
-PIP_CMD="pip3"
-if ! command -v pip3 >/dev/null 2>&1; then
-  PIP_CMD="pip"
-fi
+# ----- Memory templates (only if missing — never overwrite user memory) -----
+echo ""
+echo "[3/5] Initializing memory templates (preserving existing)..."
+for f in user_memory.md memory_change_log.md; do
+    dest="$MEMORY_DIR/$f"
+    if [ -f "$dest" ]; then
+        echo "  - $f exists, preserved."
+    else
+        cp "$SKILL_DIR/_memory_template/$f" "$dest"
+        echo "  - $f initialized."
+    fi
+done
 
-# --break-system-packages is needed on macOS Python 3.11+ system Python.
-# Falls back gracefully if not supported.
-$PIP_CMD install --quiet python-docx Pillow pypdf requests beautifulsoup4 \
-  --break-system-packages 2>/dev/null || \
-  $PIP_CMD install --quiet python-docx Pillow pypdf requests beautifulsoup4
-
-echo "  ✓ python-docx, Pillow, pypdf, requests, beautifulsoup4 installed"
-
-# 3. Copy memory templates on first install
-if [ ! -f "$HOME_DIR/memory/user_memory.md" ]; then
-  cp "$SKILL_DIR/_memory_template/user_memory.md" "$HOME_DIR/memory/"
-  echo "  ✓ user_memory.md initialized"
+# ----- config.json (only if missing) -----
+CONFIG_FILE="$HOME_BASE/config.json"
+if [ -f "$CONFIG_FILE" ]; then
+    echo ""
+    echo "[4/5] config.json exists — preserved."
+    echo "  Edit it manually to add or update API keys."
 else
-  echo "  · user_memory.md already exists — preserved"
-fi
-
-if [ ! -f "$HOME_DIR/memory/memory_change_log.md" ]; then
-  cp "$SKILL_DIR/_memory_template/memory_change_log.md" "$HOME_DIR/memory/"
-  echo "  ✓ memory_change_log.md initialized"
-else
-  echo "  · memory_change_log.md already exists — preserved"
-fi
-
-# 4. Default config.json
-if [ ! -f "$HOME_DIR/config.json" ]; then
-  cat > "$HOME_DIR/config.json" <<EOF
+    echo ""
+    echo "[4/5] Writing fresh config.json template..."
+    cat > "$CONFIG_FILE" <<'EOF'
 {
-  "unsplash_access_key": "",
-  "openai_api_key": "",
+  "serpapi_key": "",
   "github_version_check": true,
   "language": "en"
 }
 EOF
-  echo "  ✓ config.json initialized (fill in API keys to enable Unsplash / DALL-E)"
-else
-  echo "  · config.json already exists — preserved"
+    echo "  ✓ Created $CONFIG_FILE."
+    echo "    No API keys are required for v0.4.2 — Codex handles all AI work natively."
+    echo "    Optional: add serpapi_key for cleaner Tier 2 face-identification web search"
+    echo "    (falls back to DuckDuckGo if absent)."
 fi
 
-# 5. Symlink into Codex CLI skills dir if it exists
-CODEX_SKILLS_DIR="$HOME/.codex/skills"
-if [ -d "$CODEX_SKILLS_DIR" ]; then
-  LINK_TARGET="$CODEX_SKILLS_DIR/cdhai-social-media-officer-linkedin.skill"
-  if [ ! -L "$LINK_TARGET" ] && [ ! -e "$LINK_TARGET" ]; then
-    ln -s "$SKILL_DIR" "$LINK_TARGET"
-    echo "  ✓ symlinked into $CODEX_SKILLS_DIR"
-  else
-    echo "  · symlink already exists in $CODEX_SKILLS_DIR"
-  fi
-else
-  echo "  · Codex CLI not detected (~/.codex/skills/ not found)"
-  echo "    If you're using Codex App, install via Plugins → 'Install from URL'"
+# ----- Symlink into Codex skills directory -----
+echo ""
+echo "[5/5] Symlinking skill into Codex skills directory..."
+mkdir -p "$CODEX_SKILLS_DIR"
+LINK_PATH="$CODEX_SKILLS_DIR/$SKILL_NAME.skill"
+if [ -L "$LINK_PATH" ] || [ -e "$LINK_PATH" ]; then
+    rm -f "$LINK_PATH"
 fi
+ln -s "$SKILL_DIR" "$LINK_PATH"
+echo "  ✓ Symlinked: $LINK_PATH → $SKILL_DIR"
 
 echo ""
-echo "==> Install complete."
+echo "=================================================="
+echo "  Install complete."
 echo ""
-echo "Next steps:"
-echo "  1. Fill in API keys (optional): nano $HOME_DIR/config.json"
-echo "  2. Verify: cat $HOME_DIR/config.json"
-echo "  3. In Codex: 'Use the cdhai-social-media-officer-linkedin skill on this folder'"
+echo "  No API keys are required for default use. Codex"
+echo "  (your runtime) handles all AI/vision/LLM tasks natively."
+echo ""
+echo "  To use:"
+echo "    1. Copy _template/content_template.docx into your working folder."
+echo "    2. Fill it in (Purpose, Post Type, Date, Key Points)."
+echo "    3. Drop any supporting PDFs / images into the same folder."
+echo "    4. In Codex App: \"Use the cdhai-social-media-officer-linkedin skill on this folder\""
+echo "=================================================="
