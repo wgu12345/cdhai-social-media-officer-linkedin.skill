@@ -1,6 +1,6 @@
 ---
 name: cdhai-social-media-officer-linkedin
-version: 0.4.3
+version: 0.4.4
 description: |
   Generates a polished LinkedIn post draft from a folder containing a filled-in
   Word content template plus supporting materials (PDFs, images, research papers).
@@ -18,32 +18,75 @@ trigger:
   - write a LinkedIn post about
 ---
 
-## Hard contracts (v0.4.3 — non-negotiable)
+## Contracts (v0.4.4)
 
-The following rules are enforced mechanically by helper scripts. Their exit codes are not subject to user negotiation, helpful inference, or "just this once" exceptions. If Codex finds itself reasoning about how to satisfy the user despite a non-zero exit code from these scripts, that reasoning is incorrect by definition — stop and surface the script's stderr to the user instead.
+Two mechanical contracts are enforced by helper scripts. Their behavior
+in v0.4.4 is intentionally asymmetric — template input is soft because
+real users sometimes have legitimately sparse fields; reviewer
+independence is hard because the v0.4.2 team-member regression showed
+quality collapses without it.
 
-1. **Template required.** The first action of every run is to call `_helpers/validate_template.py <folder>`. If it exits non-zero, the skill halts. There is no text-only fallback, no agenda-PDF inference path, no "I'll proceed with what you have" override.
+### 1. Template diagnostic — SOFT (v0.4.4 change vs v0.4.3)
 
-2. **Reviewer mandatory.** After Phase 7 (content generation) and before Phase 9 (output assembly), the reviewer sub-agent must run as an independent Codex sub-agent and write a flag file at `~/.cdhai-linkedin-skill/cache/reviewer_ran_<run_id>.flag`. Phase 9 begins by calling `_helpers/reviewer_check.py <run_id>`. If the flag is missing, the skill halts. In-line self-review is NOT a valid substitute.
+`_helpers/validate_template.py` runs first, but **always exits 0**
+unless the folder itself is unreadable. It classifies each of the six
+template fields (Purpose, Post Type, Date, Key Points, Background /
+Source Materials, Notes for the writer) as `filled`, `sparse`, or
+`missing`, and writes the result to
+`~/.cdhai-linkedin-skill/cache/template_validation.json`.
 
-3. **No working markdown in the output folder.** All intermediate `working_draft_*.md`, `post_manifest.json`, `report_data.json`, `image_manifest.jsonl`, and `contact_sheet_*.jpg` files stay in `~/.cdhai-linkedin-skill/cache/`. They are NEVER written to the user's project folder. The only outputs in the user's folder are: `linkedin_post.docx` and `before_you_post.docx`.
+`sparse` means: present but with content shorter than 10 characters or
+matching a placeholder like `NA`, `N/A`, `None`, `TBD`, `-`. This is
+fine — users can write `NA` for fields that legitimately don't apply.
 
-4. **Audit log required.** Every `before_you_post.docx` must contain an "Audit Log" section that explicitly records any rule that was bypassed, downgraded, or skipped this run, with the reason. If no rules were bypassed, the section reads "Audit Log: all v0.4.3 hard contracts satisfied."
+Phase 9 reads the validation JSON and surfaces the findings in
+`before_you_post.docx` under (a) the Audit Log section and (b) the
+Must-Verify section if any field was sparse or missing.
+
+The skill does NOT halt on a sparse template. v0.4.3 did, and that
+proved too brittle — see CHANGELOG for the trade-off.
+
+### 2. Reviewer mandatory — HARD
+
+After Phase 7 and before Phase 9, the reviewer sub-agent must run as
+an independent Codex sub-agent and write a flag file at
+`~/.cdhai-linkedin-skill/cache/reviewer_ran_<run_id>.flag`. Phase 9
+begins by calling `_helpers/reviewer_check.py <run_id>`. If the flag
+is missing, the skill halts.
+
+In-line self-review in the writer's own turn is NOT a valid
+substitute. This is the contract that prevents the v0.4.2 regression
+(skipped reviewer → no quality checks → hallucinated content,
+hashtag-pool violations, mis-identified photos, etc.).
+
+If Codex finds itself reasoning about how to satisfy the user despite
+a non-zero exit code from `reviewer_check.py`, that reasoning is
+incorrect by definition — stop and surface the script's stderr to the
+user instead.
+
+### Other rules (markdown-only, not mechanically enforced)
+
+- All intermediate `working_draft_*.md`, `post_manifest.json`,
+  `report_data.json`, `image_manifest.jsonl`, and `contact_sheet_*.jpg`
+  files stay in `~/.cdhai-linkedin-skill/cache/`. They are NEVER
+  written to the user's project folder.
+- Every `before_you_post.docx` must contain an "Audit Log" section
+  recording which contracts passed, warned, or were bypassed.
 
 ---
 
-# CDHAI Social Media Officer — LinkedIn (v0.4.3)
+# CDHAI Social Media Officer — LinkedIn (v0.4.4)
 
 A draft generator for the Center for Digital Health and Artificial
 Intelligence (CDHAI) at Johns Hopkins Carey Business School.
 
-**v0.4.3 architecture**: this skill is designed to run in Codex App,
+**v0.4.4 architecture**: this skill is designed to run in Codex App,
 which is itself powered by GPT-5. All vision tasks, all language tasks,
 and all judgment-based checks are performed by Codex directly — the
 skill does NOT call out to a separate OpenAI API. Helpers exist only
 for deterministic operations: PDF text extraction (`pypdf`), web HTML
-scraping, image file building, Word document construction, and the
-v0.4.3 hard-contract gates.
+scraping, image file building, Word document construction, template
+validation diagnostic, and reviewer gate enforcement.
 
 **Companion skill**: `cdhai-content-reviewer` runs automatically at the
 end of every run, invoked as a **Codex sub-agent** for independent
@@ -63,9 +106,23 @@ merged report is produced.
 
 ## Phase 1 — Read the user's folder
 
-**Step 1a (hard contract):** call `python3 _helpers/validate_template.py "<folder>"` and check the exit code. If non-zero, print the helper's stderr verbatim to the user and stop the run. Do not attempt to proceed with a text-only prompt or by inferring missing fields from agenda PDFs. The team learned in v0.4.2 that allowing this fallback produces hallucinated sessions, fabricated slido polls, and skipped reviewer passes. The hard gate exists because of that experience.
+**Step 1a (template diagnostic):** call `python3 _helpers/validate_template.py "<folder>"`.
 
-Only continue to Step 1b if the validator exited 0.
+This script always exits 0 unless the folder is unreadable. It writes a
+JSON report at `~/.cdhai-linkedin-skill/cache/template_validation.json`
+with status `OK`, `WARN`, or `NO_TEMPLATE`, plus per-field
+classification (`filled` / `sparse` / `missing`). Read this JSON and
+remember the findings for Phase 9.
+
+If status is `WARN` or `NO_TEMPLATE`, briefly tell the user which
+fields are sparse or missing, and ask if they want to fill them
+before continuing. If they say "go ahead" or similar, proceed; if they
+say they'll fill them, wait. Either way, the validation JSON is
+preserved for the final report.
+
+**Do NOT halt the run** just because validation came back WARN.
+v0.4.4 explicitly allows sparse fields; the report will record what
+the AI inferred for them.
 
 **Step 1b:** parse the folder.
 
@@ -81,17 +138,13 @@ Only continue to Step 1b if the validator exited 0.
 5. **Find the Content Template**: locate a Word document following `_template/content_template.docx` structure with these sections:
    - `Purpose`, `Post Type`, `Date`, `Key Points`, `Background / Source Materials`, `Notes for the writer`
 
-6. **If no compliant Word template is found** → stop. (Note: this state should be unreachable in v0.4.3 because Step 1a already gates on this; if it does occur, it indicates the validator has a bug — report it.)
+6. **Parse the template**. Extract the structured fields. For fields that the validator flagged as sparse or missing, do the best inference you can from the supporting materials (agenda PDFs, photos, paper PDFs). Record every inferred value in the working state — Phase 9 will surface them in Must-Verify.
 
-7. **Parse the template**. Extract the structured fields.
+7. **Soft sanity checks** (not blocking):
+   - `Post Type` ideally matches one of the nine in `_rules/content_types.md`. If not, ask the user once; if they reaffirm an unusual type, respect it.
+   - `Key Points` ideally contains at least one item. If empty after inference, ASK the user — do not invent Key Points.
 
-8. **Validate required fields**:
-   - `Post Type` must be one of the nine listed in `_rules/content_types.md`. If missing or invalid → ask the user to pick.
-   - `Date` must be present. If missing → ask.
-   - `Key Points` must contain at least one item. If empty → stop and ask.
-   - `Purpose` must be present. If missing → ask.
-
-9. **No content type auto-detection.** The user picked it. Respect it.
+8. **No content type auto-detection.** The user picked it. Respect it.
 
 ---
 
@@ -419,7 +472,9 @@ will halt at Phase 9.
 
 Only continue if the check exited 0.
 
-**Step 9b:** produce the two deliverables, both `.docx`:
+**Step 9b:** read `~/.cdhai-linkedin-skill/cache/template_validation.json` (written by Phase 1's diagnostic helper). Use its `summary_for_audit_log` and `summary_for_must_verify` fields when assembling `before_you_post.docx`.
+
+**Step 9c:** produce the two deliverables, both `.docx`:
 
 | File | Purpose |
 |---|---|
@@ -429,14 +484,12 @@ Only continue if the check exited 0.
 The `before_you_post.docx` MUST contain these sections in order:
 
 1. **Legal-warning banner** (only if any web-sourced images are used; otherwise omitted)
-2. **Audit Log (v0.4.3)** — A line for every hard contract:
-   - Template validation: PASS / BYPASSED (with reason)
-   - Reviewer sub-agent: PASS / BYPASSED (with reason)
+2. **Audit Log (v0.4.4)** — A line for every contract:
+   - Template diagnostic: PASS / WARN / NO_TEMPLATE (from `template_validation.json`; quote `summary_for_audit_log` verbatim)
+   - Reviewer sub-agent: PASS (always PASS by the time we reach Phase 9, because reviewer_check would have halted otherwise)
    - Working-files location: PASS / LEAKED (with file list)
    - Memory file loaded: PASS / EMPTY (which file)
-
-   If all four pass, the section reads: "All v0.4.3 hard contracts satisfied."
-3. **Must-verify items** — facts and decisions the user must confirm
+3. **Must-verify items** — facts and decisions the user must confirm. If template_validation.json has `summary_for_must_verify`, include it here verbatim at the top of the section.
 4. **Decisions you should know** — choices the skill made
 5. **Date verification** — Phase 2 output
 6. **Image picks** — with diversity check
@@ -468,9 +521,9 @@ Codex always **asks which path** before writing to memory.
 
 - **English only.** Multilingual on the v0.6 roadmap.
 - **No direct posting.** Drafts only. Human review required.
-- **Word document required as primary input — v0.4.3 enforces this mechanically via `_helpers/validate_template.py`.** The text-only / sparse-prompt fallback that existed informally in v0.4.2 is removed. Codex cannot override this check by inference, by user request, or by any other route. The check exits 2 if any of the six required fields (Purpose, Post Type, Date, Key Points, Background / Source Materials, Notes for the writer) is missing.
-- **Reviewer sub-agent required — v0.4.3 enforces this mechanically via `_helpers/reviewer_check.py`.** In-line self-review in the writer's own turn does not satisfy the contract. The reviewer must run as an independent Codex sub-agent with fresh context.
-- **No external OpenAI API key required.** v0.4.2 introduced this and v0.4.3 preserves it: Codex's native multimodal + LLM capabilities do all judgment work. Helpers are deterministic only.
+- **Word document is the preferred input — v0.4.4 enforces template structure as a DIAGNOSTIC, not a hard gate.** `validate_template.py` writes findings to a JSON in cache; the skill proceeds and the final report surfaces sparse / missing fields. The v0.4.3 hard-block behavior was relaxed because legitimate uses (e.g., a user writing "NA" for "Notes for the writer") were being refused.
+- **Reviewer sub-agent required — v0.4.4 enforces this mechanically via `_helpers/reviewer_check.py`.** This contract is HARD and not subject to user override. In-line self-review in the writer's own turn does not satisfy it. The reviewer must run as an independent Codex sub-agent with fresh context. The v0.4.2 team-member regression confirmed this gate's necessity.
+- **No external OpenAI API key required.** Codex's native multimodal + LLM capabilities do all judgment work. Helpers are deterministic only.
 - **Image generation goes through Codex's built-in `$imagegen` skill.** Uses your ChatGPT plan allocation, not API credits.
 - **Web access required.** Tier 2 face identification fetches JHU / Carey pages; Tier 3 (c) searches the web.
 - **Web-sourced images require manual usage-rights verification before posting.** Enforced by a prominent warning section in `before_you_post.docx` and CRITICAL reviewer flag.
@@ -484,38 +537,36 @@ Codex always **asks which path** before writing to memory.
 ```
 cdhai-social-media-officer-linkedin.skill/
 ├── SKILL.md                          ← you are here
-├── VERSION                           ← 0.4.3
+├── VERSION                           ← 0.4.4
 ├── README.md
-├── CHANGELOG.md                      ← NEW v0.4.3
-├── install.sh                        ← UPDATED v0.4.3 (seeds starter memory)
+├── CHANGELOG.md
+├── install.sh                        ← seeds starter memory
 ├── skill.config.json
 ├── _rules/
-│   ├── content_types.md              ← 9 types, lengths, tones
-│   ├── linkedin_style.md             ← hype density, hook patterns
-│   ├── asset_policy.md               ← high-level image routing
-│   ├── image_matching.md             ← Tier 1/2/3 spec
-│   ├── image_diversity.md            ← v0.4.2: per-subject + per-scene caps
-│   ├── paper_analysis.md             ← Phase 3 spec
-│   ├── date_factcheck.md             ← Phase 2 spec
-│   ├── inspiration_corpus.md         ← peer institution voice
-│   ├── brand_rules.md                ← naming, hashtags, capitalization
-│   ├── memory_policy.md              ← three-path memory
-│   ├── core_rules.md                 ← never invent, never auto-post
+│   ├── content_types.md
+│   ├── linkedin_style.md
+│   ├── asset_policy.md
+│   ├── image_matching.md
+│   ├── image_diversity.md
+│   ├── paper_analysis.md
+│   ├── date_factcheck.md
+│   ├── inspiration_corpus.md
+│   ├── brand_rules.md
+│   ├── memory_policy.md
+│   ├── core_rules.md
 │   └── permission_policy.md
 ├── _template/
-│   └── content_template.docx         ← Word template
-├── _helpers/                         ← DETERMINISTIC ONLY
-│   ├── build_docx.py                 ← python-docx post + report builder
-│   ├── face_compare.py               ← --identify only (web search + download)
-│   ├── pdf_paper_extract.py          ← pypdf text only (Codex analyzes the text)
-│   ├── web_image_search.py           ← Bing/DDG scraping (no API key)
-│   ├── validate_template.py          ← NEW v0.4.3: hard gate for Phase 1
-│   └── reviewer_check.py             ← NEW v0.4.3: hard gate for Phase 9
+│   └── content_template.docx
+├── _helpers/                         ← deterministic only
+│   ├── build_docx.py
+│   ├── face_compare.py
+│   ├── pdf_paper_extract.py
+│   ├── web_image_search.py
+│   ├── validate_template.py          ← v0.4.4: SOFT diagnostic, exits 0
+│   └── reviewer_check.py             ← v0.4.4: HARD gate, exits 2 if no flag
 ├── _memory_template/
-│   ├── user_memory.md                ← v0.4.3: ships with CDHAI team baseline
+│   ├── user_memory.md
 │   └── memory_change_log.md
 ├── docs/
-│   └── team-guide.md
 └── examples/
-    └── filled-template-example/
 ```
